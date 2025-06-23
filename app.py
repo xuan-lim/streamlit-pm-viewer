@@ -162,9 +162,25 @@ if 'df' in st.session_state:
             gantt_df = filtered_df[
                 (filtered_df['Start Date'] <= pd.to_datetime(date_range_end)) &
                 (filtered_df['End Date'] >= pd.to_datetime(date_range_start))
-            ].sort_values(by='Start Date')
+            ].copy() # Make a copy to avoid SettingWithCopyWarning
+
 
             if not gantt_df.empty:
+                # --- Apply Project Sequence Sorting for Gantt Chart ---
+                # Create a numerical rank for sorting based on Type
+                type_rank_map = {
+                    'program': 1,
+                    'project': 1, # Both program and project at the same top level for sorting purposes
+                    'sub-project': 2,
+                    'task': 3,
+                    'milestone': 4
+                }
+                gantt_df['Hierarchy_Rank'] = gantt_df['Type'].str.lower().map(type_rank_map).fillna(99) # Fillna for unknown types, giving them lowest priority
+
+                # Sort the DataFrame before passing to px.timeline
+                # Sort by Hierarchy_Rank, then Start Date, then Name
+                gantt_df = gantt_df.sort_values(by=['Hierarchy_Rank', 'Start Date', 'Name'])
+
                 gantt_df['Text'] = gantt_df.apply(
                     lambda row: f"{row['Name']} ({row['Type']})<br>Status: {row['Status'].capitalize()}<br>Progress: {row['Progress']:.0f}%", axis=1
                 )
@@ -194,19 +210,18 @@ if 'df' in st.session_state:
                     hover_data={
                         "Type": True,
                         "Status": True,
-                        "Start Date": "|%Y-%m-%d",
-                        "End Date": "|%Y-%m-%d",
+                        "Start Date": "|%Y-%m-%d", # Full date already here for hover
+                        "End Date": "|%Y-%m-%d",   # Full date already here for hover
                         "Delivered Date": "|%Y-%m-%d",
                         "Progress": ":.0f%",
                         "Parent ID": True
                     },
                     color_discrete_map=custom_colors
                 )
-                fig.update_yaxes(autorange="reversed")
+                fig.update_yaxes(autorange="reversed") # Keep reversed for Gantt standard (first item at top)
                 fig.update_layout(height=600, showlegend=True)
 
                 # Set X-axis tick format based on selected granularity
-                # dtick for forcing ticks at certain intervals (e.g., M1 for monthly, M3 for quarterly)
                 if time_scale_option == "Daily":
                     fig.update_xaxes(tickformat='%Y-%m-%d')
                 elif time_scale_option == "Weekly":
@@ -217,6 +232,23 @@ if 'df' in st.session_state:
                     fig.update_xaxes(tickformat='%Y-Q%q', dtick='M3') # dtick='M3' for quarterly intervals (every 3 months)
                 elif time_scale_option == "Annually":
                     fig.update_xaxes(tickformat='%Y', dtick='M12') # dtick='M12' for yearly intervals
+                
+                # --- Add Hovering Lines (Spikelines) ---
+                fig.update_xaxes(
+                    showspikelines=True,
+                    spikemode="across", # Line across the plot area
+                    spikesnap="cursor", # Snap spike to cursor's x-position
+                    spikethickness=1,
+                    spikecolor="rgba(0,0,0,0.5)" # Semi-transparent black
+                )
+                fig.update_yaxes(
+                    showspikelines=True,
+                    spikemode="across", # Line across the plot area
+                    spikesnap="cursor", # Snap spike to cursor's y-position
+                    spikethickness=1,
+                    spikecolor="rgba(0,0,0,0.5)"
+                )
+
 
                 st.plotly_chart(fig, use_container_width=True)
             else:
@@ -243,22 +275,29 @@ if 'df' in st.session_state:
             top_level_projects_for_display = filtered_df[
                 (filtered_df['Parent ID'] == '') |
                 (~filtered_df['Parent ID'].isin(existing_item_ids))
-            ].sort_values(by=['Start Date', 'Name'])
-
-            # Ensure no duplicates if an item satisfies multiple conditions
-            top_level_projects_for_display = top_level_projects_for_display.drop_duplicates(subset=['ID'])
+            ].copy() # Make a copy
 
             # Recursive function to display children
             def display_children(parent_id, level=0):
                 if parent_id in children_map.groups:
-                    children = children_map.get_group(parent_id)
+                    children = children_map.get_group(parent_id).copy() # Make a copy
                 else:
                     children = pd.DataFrame()
 
                 if children.empty:
                     return
 
-                children = children.sort_values(by=['Start Date', 'Name'])
+                # Sort children by Hierarchy_Rank, then Start Date, then Name for consistent display order
+                type_rank_map_children = { # Redefine for clarity, same as above
+                    'program': 1,
+                    'project': 1,
+                    'sub-project': 2,
+                    'task': 3,
+                    'milestone': 4
+                }
+                children['Hierarchy_Rank'] = children['Type'].str.lower().map(type_rank_map_children).fillna(99)
+                children = children.sort_values(by=['Hierarchy_Rank', 'Start Date', 'Name'])
+
 
                 for index, row in children.iterrows():
                     prefix = "  " * level
@@ -300,6 +339,21 @@ if 'df' in st.session_state:
 
             # Iterate through top-level projects for display
             if not top_level_projects_for_display.empty:
+                # Ensure no duplicates if an item satisfies multiple conditions (e.g., Parent ID empty AND not in existing_item_ids after filter)
+                top_level_projects_for_display = top_level_projects_for_display.drop_duplicates(subset=['ID'])
+
+                # Sort top-level projects themselves by Hierarchy_Rank, then Start Date, then Name
+                type_rank_map_top = {
+                    'program': 1,
+                    'project': 1,
+                    'sub-project': 2, # If a sub-project is orphaned, it might appear at top
+                    'task': 3,
+                    'milestone': 4
+                }
+                top_level_projects_for_display['Hierarchy_Rank'] = top_level_projects_for_display['Type'].str.lower().map(type_rank_map_top).fillna(99)
+                top_level_projects_for_display = top_level_projects_for_display.sort_values(by=['Hierarchy_Rank', 'Start Date', 'Name'])
+
+
                 for index, row in top_level_projects_for_display.iterrows():
                     progress_val = int(row['Progress'])
                     progress_bar_text = f" {progress_val}%"
@@ -313,7 +367,7 @@ if 'df' in st.session_state:
                     if is_orphan:
                         expander_label += f" *(Orphaned: Parent '{row['Parent ID']}' missing)*"
                         
-                    # Always make top-level items (or those promoted to top-level) expandable if they could have children
+                    # Always make top-level items (or those promoted to top-level) expandable if they could have children or are container types
                     is_expandable_type = row['Type'].lower() in ['project', 'program', 'sub-project']
                     
                     if is_parent_node or is_expandable_type:
@@ -327,7 +381,7 @@ if 'df' in st.session_state:
                                 st.progress(progress_val / 100)
                             display_children(row['ID'], 1) # Start recursion for children at level 1
                     else:
-                        # This handles items at the top level that are not parents and not typically expandable types (e.g., a top-level task)
+                        # This handles items at the top level that are not parents and not typically expandable types (e.g., a top-level task/milestone)
                         status_emoji = "✅" if row['Status'] == 'completed' else "⏳" if row['Status'] == 'in progress' else "🔴" if row['Status'] == 'overdue' else "⚪"
                         st.markdown(f"**{expander_icon} {row['Name']}** ({row['Type']}){progress_bar_text} - Status: {row.get('Status', 'N/A').title()}")
                         st.markdown(f"  - **ID:** {row['ID']}")
