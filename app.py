@@ -3,91 +3,7 @@ import pandas as pd
 from datetime import datetime, timedelta
 import plotly.express as px
 
-# --- Page Configuration ---
-st.set_page_config(
-    page_title="Dynamic PM Dashboard",
-    page_icon="📊",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-st.title("📊 Dynamic Project Management Dashboard")
-
-st.markdown("""
-Upload your project management Excel file (.xlsx or .xls) to visualize your project data.
-""")
-
-# --- File Uploader ---
-uploaded_file = st.file_uploader("Choose an Excel file", type=["xlsx", "xls"])
-
-if uploaded_file is not None:
-    try:
-        df = pd.read_excel(uploaded_file, engine='openpyxl')
-
-        # --- Data Cleaning and Preprocessing ---
-        # Convert date columns to datetime objects
-        date_cols = ['Start Date', 'End Date', 'Delivered Date']
-        for col in date_cols:
-            if col in df.columns:
-                df[col] = pd.to_datetime(df[col], errors='coerce')
-
-        # Fill NaN in 'Parent ID' for top-level projects (assuming they have no parent)
-        if 'Parent ID' in df.columns:
-            df['Parent ID'] = df['Parent ID'].fillna('')
-        else:
-            df['Parent ID'] = ''  # Ensure 'Parent ID' column exists even if missing
-
-        # Create a unique ID for each item if not present, or ensure it's string
-        if 'ID' not in df.columns:
-            df['ID'] = [f"Item_{i}" for i in range(len(df))]
-        df['ID'] = df['ID'].astype(str)
-
-        # Ensure 'Name' and 'Type' columns exist and are string
-        for col in ['Name', 'Type']:
-            if col not in df.columns:
-                st.error(f"Missing required column: `{col}`. Please check your Excel file. Essential columns: ID, Name, Type, Start Date, End Date.")
-                st.stop()
-            df[col] = df[col].astype(str).fillna('')
-
-        # Handle 'Progress' column: Use existing or infer
-        if 'Progress' not in df.columns:
-            st.info("No 'Progress' column found. Inferring progress: 100% if delivered, 0% otherwise. Please add a 'Progress' column (0-100) for more accuracy.")
-            df['Progress'] = df['Delivered Date'].apply(lambda x: 100 if pd.notna(x) else 0)
-        else:
-            df['Progress'] = pd.to_numeric(df['Progress'], errors='coerce').fillna(0) # Ensure numeric, fill NaNs with 0
-
-        # Create a 'Status' column if missing, or standardize it
-        if 'Status' not in df.columns:
-            st.info("No 'Status' column found. Inferring status based on dates. Please add a 'Status' column (e.g., 'In Progress', 'Completed') for better control.")
-            df['Status'] = 'N/A' # Default
-        else:
-            df['Status'] = df['Status'].astype(str).str.lower().fillna('n/a')
-
-        # Infer status for better alerts if status column is generic or missing
-        today = pd.to_datetime(datetime.now().date())
-        def infer_status(row):
-            if pd.notna(row['Delivered Date']) and row['Delivered Date'] <= row['End Date']:
-                return 'completed'
-            elif pd.notna(row['End Date']) and row['End Date'] < today:
-                return 'overdue'
-            elif pd.notna(row['Start Date']) and pd.notna(row['End Date']) and row['Start Date'] <= today and row['End Date'] >= today and row.get('Status', '').lower() not in ['completed', 'overdue']:
-                return 'in progress'
-            elif row.get('Status', '').lower() == 'n/a' or pd.isna(row.get('Status')): # Only overwrite generic 'N/A' status
-                return 'not started'
-            return row['Status'] # Keep existing status if it's specific
-
-        df['Status'] = df.apply(infer_status, axis=1)
-
-
-        st.success("Excel file successfully uploaded and processed!")
-
-        # Store DataFrame in session state to avoid re-uploading
-        st.session_state.df = df
-
-    except Exception as e:
-        st.error(f"❌ Error reading file: {e}")
-        st.info("Please ensure it's a valid Excel file (.xlsx or .xls) and that required columns (ID, Name, Type, Start Date, End Date) are present and correctly formatted.")
-        st.stop()
+# ... (rest of your code remains the same until the slider section) ...
 
 # --- Main App Logic (only if DataFrame is loaded) ---
 if 'df' in st.session_state:
@@ -123,28 +39,42 @@ if 'df' in st.session_state:
             st.markdown("Interact with the chart (zoom, pan) using the toolbar. Use sliders below to adjust date range.")
 
             # Date Range Slider for "Zoom"
-            min_date = filtered_df['Start Date'].min() if not filtered_df['Start Date'].empty else datetime.now() - timedelta(days=30)
-            max_date = filtered_df['End Date'].max() if not filtered_df['End Date'].empty else datetime.now() + timedelta(days=365)
+            # Get min/max dates from filtered_df, convert to datetime.date
+            # Provide sensible defaults if filtered_df is empty or dates are missing
+            min_date_df = filtered_df['Start Date'].min()
+            max_date_df = filtered_df['End Date'].max()
 
-            if pd.isna(min_date): min_date = datetime.now() - timedelta(days=30)
-            if pd.isna(max_date): max_date = datetime.now() + timedelta(days=365)
+            # Ensure they are valid datetime objects before converting to date
+            min_date = min_date_df.date() if pd.notna(min_date_df) else (datetime.now().date() - timedelta(days=90))
+            max_date = max_date_df.date() if pd.notna(max_date_df) else (datetime.now().date() + timedelta(days=180))
 
-            # Ensure min_date and max_date are actual datetime objects for the slider
-            min_date = pd.to_datetime(min_date.date())
-            max_date = pd.to_datetime(max_date.date())
+            # Adjust min/max if the DataFrame is very short-term or future-only
+            if min_date > max_date: # Handle cases where data might be single day or start > end for some reason
+                min_date = max_date - timedelta(days=7) # Ensure a valid range
 
+            # Ensure the initial value for the slider is also datetime.date objects
+            # Use current date as a midpoint if the range is too wide or default
+            today_date = datetime.now().date()
+            default_slider_start = max(min_date, today_date - timedelta(days=30)) # Start 30 days before today, but not before min_date
+            default_slider_end = min(max_date, today_date + timedelta(days=90))  # End 90 days after today, but not after max_date
+
+            # Ensure default start is not after default end
+            if default_slider_start > default_slider_end:
+                 default_slider_start = default_slider_end - timedelta(days=7) # ensure at least 7 days range
+
+            # THIS IS THE KEY FIX: Ensure all values are datetime.date objects for st.slider
             date_range_start, date_range_end = st.slider(
                 "Select Date Range for Timeline:",
                 min_value=min_date,
                 max_value=max_date,
-                value=(min_date, max_date),
+                value=(default_slider_start, default_slider_end),
                 format="YYYY-MM-DD"
             )
 
             # Filter data for Gantt chart based on selected date range
             gantt_df = filtered_df[
-                (filtered_df['Start Date'] <= date_range_end) &
-                (filtered_df['End Date'] >= date_range_start)
+                (filtered_df['Start Date'] <= pd.to_datetime(date_range_end)) & # Convert slider output back to Timestamp for filtering
+                (filtered_df['End Date'] >= pd.to_datetime(date_range_start))
             ].sort_values(by='Start Date')
 
             if not gantt_df.empty:
@@ -189,12 +119,11 @@ if 'df' in st.session_state:
 
                 for index, row in children.iterrows():
                     prefix = "  " * level
-                    # Removed 'key' for expander for compatibility
                     
-                    progress_bar = f" {int(row['Progress'])}%"
+                    progress_bar_text = f" {int(row['Progress'])}%"
                     
                     if row['Type'] in ['Project', 'Sub-Project'] and row['ID'] in filtered_df['Parent ID'].values:
-                        with st.expander(f"{prefix}📁 **{row['Name']}** ({row['Type']}) {progress_bar} - Status: {row.get('Status', 'N/A').title()}"):
+                        with st.expander(f"{prefix}📁 **{row['Name']}** ({row['Type']}){progress_bar_text} - Status: {row.get('Status', 'N/A').title()}"):
                             st.write(f"- **ID:** {row['ID']}")
                             st.write(f"- **Start:** {row['Start Date'].strftime('%Y-%m-%d') if pd.notnull(row['Start Date']) else 'N/A'}")
                             st.write(f"- **End:** {row['End Date'].strftime('%Y-%m-%d') if pd.notnull(row['End Date']) else 'N/A'}")
@@ -203,7 +132,7 @@ if 'df' in st.session_state:
                             display_children(row['ID'], level + 1)
                     else: # It's a Task, Milestone, or a Project/Sub-Project without further children
                         status_emoji = "✅" if row['Status'] == 'completed' else "⏳" if row['Status'] == 'in progress' else "🔴" if row['Status'] == 'overdue' else "⚪"
-                        st.markdown(f"{prefix}{status_emoji} **{row['Name']}** ({row['Type']}) {progress_bar}")
+                        st.markdown(f"{prefix}{status_emoji} **{row['Name']}** ({row['Type']}){progress_bar_text}")
                         st.markdown(f"{prefix}  - **ID:** {row['ID']}")
                         st.markdown(f"{prefix}  - **Start:** {row['Start Date'].strftime('%Y-%m-%d') if pd.notnull(row['Start Date']) else 'N/A'}")
                         st.markdown(f"{prefix}  - **End:** {row['End Date'].strftime('%Y-%m-%d') if pd.notnull(row['End Date']) else 'N/A'}")
@@ -217,10 +146,9 @@ if 'df' in st.session_state:
 
             if not top_level_projects.empty:
                 for index, row in top_level_projects.iterrows():
-                    progress_bar = f" {int(row['Progress'])}%"
+                    progress_bar_text = f" {int(row['Progress'])}%"
                     if row['Type'] in ['Project', 'Program'] or row['ID'] in filtered_df['Parent ID'].values:
-                        # Removed 'key' for expander for compatibility
-                        with st.expander(f"📌 **{row['Name']}** ({row['Type']}) {progress_bar} - Status: {row.get('Status', 'N/A').title()}", expanded=True):
+                        with st.expander(f"📌 **{row['Name']}** ({row['Type']}){progress_bar_text} - Status: {row.get('Status', 'N/A').title()}", expanded=True):
                             st.write(f"- **ID:** {row['ID']}")
                             st.write(f"- **Start:** {row['Start Date'].strftime('%Y-%m-%d') if pd.notnull(row['Start Date']) else 'N/A'}")
                             st.write(f"- **End:** {row['End Date'].strftime('%Y-%m-%d') if pd.notnull(row['End Date']) else 'N/A'}")
@@ -229,7 +157,7 @@ if 'df' in st.session_state:
                             display_children(row['ID'], 1)
                     else: # A top-level item that doesn't act as a parent (e.g., a standalone task)
                         status_emoji = "✅" if row['Status'] == 'completed' else "⏳" if row['Status'] == 'in progress' else "🔴" if row['Status'] == 'overdue' else "⚪"
-                        st.markdown(f"**{status_emoji} {row['Name']}** ({row['Type']}) {progress_bar} - Status: {row.get('Status', 'N/A').title()}")
+                        st.markdown(f"**{status_emoji} {row['Name']}** ({row['Type']}){progress_bar_text} - Status: {row.get('Status', 'N/A').title()}")
                         st.markdown(f"  - **ID:** {row['ID']}")
                         st.markdown(f"  - **Start:** {row['Start Date'].strftime('%Y-%m-%d') if pd.notnull(row['Start Date']) else 'N/A'}")
                         st.markdown(f"  - **End:** {row['End Date'].strftime('%Y-%m-%d') if pd.notnull(row['End Date']) else 'N/A'}")
@@ -243,17 +171,18 @@ if 'df' in st.session_state:
 
         with col2: # Right Column for Alerts and Summaries
             st.header("🔔 Alerts")
-            today = pd.to_datetime(datetime.now().date())
+            today_date_only = datetime.now().date() # Use native date for comparisons
 
             # Filter active items for alerts (not completed or overdue due to delayed delivery)
+            # Ensure 'End Date' is a datetime.date object for comparison, if it came from pandas.Timestamp
             alert_items = filtered_df[
                 ((filtered_df['Status'].isin(['in progress', 'not started', 'on hold', 'overdue'])) |
-                 (filtered_df['Delivered Date'].notna() & (filtered_df['Delivered Date'] > filtered_df['End Date']))) &
+                 (filtered_df['Delivered Date'].notna() & (filtered_df['Delivered Date'].dt.date > filtered_df['End Date'].dt.date))) &
                 (filtered_df['End Date'].notna()) # Ensure End Date exists for comparison
             ].copy()
 
             st.subheader("❗ Overdue Items")
-            overdue_items = alert_items[alert_items['End Date'] < today].sort_values(by='End Date')
+            overdue_items = alert_items[alert_items['End Date'].dt.date < today_date_only].sort_values(by='End Date')
             if not overdue_items.empty:
                 for idx, item in overdue_items.head(5).iterrows(): # Show top 5 overdue
                     st.error(f"**{item['Name']}** ({item['Type']}) is overdue! (Due: {item['End Date'].strftime('%Y-%m-%d')})")
@@ -262,20 +191,20 @@ if 'df' in st.session_state:
 
             st.subheader("🔜 Due Soon (Next 7 Days)")
             due_soon_items = alert_items[
-                (alert_items['End Date'] >= today) &
-                (alert_items['End Date'] <= today + timedelta(days=7))
+                (alert_items['End Date'].dt.date >= today_date_only) &
+                (alert_items['End Date'].dt.date <= today_date_only + timedelta(days=7))
             ].sort_values(by='End Date')
 
             if not due_soon_items.empty:
                 for idx, item in due_soon_items.head(5).iterrows(): # Show top 5 due soon
-                    st.warning(f"**{item['Name']}** ({item['Type']}) due in {(item['End Date'] - today).days} days! (End: {item['End Date'].strftime('%Y-%m-%d')})")
+                    st.warning(f"**{item['Name']}** ({item['Type']}) due in {(item['End Date'].dt.date - today_date_only).days} days! (End: {item['End Date'].strftime('%Y-%m-%d')})")
             else:
                 st.info("Nothing due in the next 7 days.")
 
             st.subheader("✅ Recently Completed (Last 30 Days)")
             completed_recently = filtered_df[
                 (filtered_df['Delivered Date'].notna()) &
-                (filtered_df['Delivered Date'] >= today - timedelta(days=30))
+                (filtered_df['Delivered Date'].dt.date >= today_date_only - timedelta(days=30))
             ].sort_values(by='Delivered Date', ascending=False)
             if not completed_recently.empty:
                 for idx, item in completed_recently.head(5).iterrows(): # Show top 5 recently completed
@@ -313,8 +242,10 @@ if 'df' in st.session_state:
             summary_df_filtered = filtered_df.dropna(subset=['End Date']).copy()
 
 
-            def get_time_period(date, granularity):
-                if granularity == "Daily": # Not in selectbox, but good for internal consistency
+            def get_time_period(date_ts, granularity): # Accepts Timestamp
+                # Convert to Python date object for consistent time period calculation
+                date = date_ts.date()
+                if granularity == "Daily":
                     return date.strftime('%Y-%m-%d')
                 elif granularity == "Weekly":
                     return f"{date.isocalendar()[0]}-W{date.isocalendar()[1]:02d}"
@@ -338,9 +269,19 @@ if 'df' in st.session_state:
                     Completed_Items=('Delivered Date', lambda x: x.notna().sum())
                 ).reset_index()
 
-                grouped_summary['Overdue_Items'] = summary_df_filtered[summary_df_filtered['Status'] == 'overdue'].groupby('Time Period')['ID'].count().reindex(grouped_summary['Time Period'], fill_value=0).values
-                grouped_summary['In_Progress_Items'] = summary_df_filtered[summary_df_filtered['Status'] == 'in progress'].groupby('Time Period')['ID'].count().reindex(grouped_summary['Time Period'], fill_value=0).values
-                grouped_summary['Not_Started_Items'] = summary_df_filtered[summary_df_filtered['Status'] == 'not started'].groupby('Time Period')['ID'].count().reindex(grouped_summary['Time Period'], fill_value=0).values
+                # Recalculate based on status counts within the summary_df_filtered (after time period grouping)
+                # Need to use apply on original df or re-group by status as well.
+                # A more robust way to do this is to ensure the status column is correctly set before this.
+                # Assuming 'Status' column in summary_df_filtered is accurate:
+                status_counts = summary_df_filtered.groupby(['Time Period', 'Status'])['ID'].count().unstack(fill_value=0)
+                
+                # Merge status counts into grouped_summary
+                for status in ['overdue', 'in progress', 'not started']:
+                    if status in status_counts.columns:
+                        grouped_summary[f'{status.replace(" ", "_").title()}_Items'] = status_counts[status].reindex(grouped_summary['Time Period'], fill_value=0).values
+                    else:
+                        grouped_summary[f'{status.replace(" ", "_").title()}_Items'] = 0
+
 
                 grouped_summary = grouped_summary.sort_values(by='Time Period')
 
@@ -350,7 +291,7 @@ if 'df' in st.session_state:
                 # Prepare data for stacked bar chart
                 chart_data_melted = grouped_summary.melt(
                     id_vars='Time Period',
-                    value_vars=['Completed_Items', 'In_Progress_Items', 'Not_Started_Items', 'Overdue_Items'],
+                    value_vars=[col for col in grouped_summary.columns if 'Items' in col and col != 'Total_Items'],
                     var_name='Status Type',
                     value_name='Count'
                 )
@@ -360,7 +301,13 @@ if 'df' in st.session_state:
                     y='Count',
                     color='Status Type',
                     title=f'Item Status by {summary_granularity}',
-                    barmode='stack'
+                    barmode='stack',
+                    color_discrete_map={
+                        'Completed_Items': 'green',
+                        'In_Progress_Items': 'blue',
+                        'Not_Started_Items': 'grey',
+                        'Overdue_Items': 'red'
+                    }
                 )
                 st.plotly_chart(fig_summary, use_container_width=True)
 
