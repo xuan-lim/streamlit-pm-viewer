@@ -82,12 +82,13 @@ if 'df' in st.session_state:
 
             for index, row in children.iterrows():
                 prefix = "  " * level
-                # Create a unique key for each expander to prevent issues
-                expander_key = f"expander_{row['ID']}_{level}"
+                # Removed the 'key' argument for compatibility with older Streamlit versions
+                # expander_key = f"expander_{row['ID']}_{level}" # Key generation is still useful if you upgrade Streamlit later
 
                 # Decide if it's a project/sub-project that can have children or a leaf node
                 if row['Type'] in ['Project', 'Sub-Project'] and row['ID'] in df['Parent ID'].values:
-                    with st.expander(f"{prefix}📁 **{row['Name']}** ({row['Type']}) - Status: {row.get('Status', 'N/A')}", expanded=(level==0), key=expander_key):
+                    # REMOVED: key=expander_key
+                    with st.expander(f"{prefix}📁 **{row['Name']}** ({row['Type']}) - Status: {row.get('Status', 'N/A')}", expanded=(level==0)):
                         st.write(f"- **ID:** {row['ID']}")
                         st.write(f"- **Start:** {row['Start Date'].strftime('%Y-%m-%d') if pd.notnull(row['Start Date']) else 'N/A'}")
                         st.write(f"- **End:** {row['End Date'].strftime('%Y-%m-%d') if pd.notnull(row['End Date']) else 'N/A'}")
@@ -103,8 +104,6 @@ if 'df' in st.session_state:
                     st.markdown(f"{prefix}  - **Status:** {row.get('Status', 'N/A')}")
                     st.markdown(f"{prefix}  - **Assigned To:** {row.get('Assigned To', 'N/A')}")
                     # You can still have a collapsed section for leaf nodes if they have more details
-                    # with st.expander(f"{prefix}* {row['Name']} ({row['Type']}) - Status: {row.get('Status', 'N/A')}", expanded=False, key=expander_key):
-                    #     st.write("More details here...")
 
 
         # Get top-level items (no parent)
@@ -114,7 +113,8 @@ if 'df' in st.session_state:
             for index, row in top_level_projects.iterrows():
                 # Ensure the top-level items are projects or similar entities
                 if row['Type'] in ['Project', 'Program'] or row['ID'] in df['Parent ID'].values:
-                    with st.expander(f"📌 **{row['Name']}** ({row['Type']}) - Status: {row.get('Status', 'N/A')}", expanded=True, key=f"top_expander_{row['ID']}"):
+                    # REMOVED: key=f"top_expander_{row['ID']}"
+                    with st.expander(f"📌 **{row['Name']}** ({row['Type']}) - Status: {row.get('Status', 'N/A')}", expanded=True):
                         st.write(f"- **ID:** {row['ID']}")
                         st.write(f"- **Start:** {row['Start Date'].strftime('%Y-%m-%d') if pd.notnull(row['Start Date']) else 'N/A'}")
                         st.write(f"- **End:** {row['End Date'].strftime('%Y-%m-%d') if pd.notnull(row['End Date']) else 'N/A'}")
