@@ -169,7 +169,7 @@ if 'df' in st.session_state: # This line must start at the very first character 
             # st.header("📋 Hierarchical Project View")
             # ... (all display_children and top_level_projects logic) ...
 
-        with col2:
+        with col2: # This is the end of the 'with' statement for col2 (Line 172 in your context)
             # --- Alerts (still commented out for now) ---
             # st.header("🔔 Alerts")
             # ... (all alert logic) ...
@@ -178,6 +178,7 @@ if 'df' in st.session_state: # This line must start at the very first character 
             # st.header("📈 Project Overview Summary")
             # ... (all summary logic) ...
 
+    # This 'elif' (Line 181 in your context) MUST be aligned with the 'if' on line 138 (if selected_tab == "Dashboard Overview":)
     elif selected_tab == "Full Data Table":
         st.header("Raw Project Data")
         st.markdown("This table shows all data from your uploaded Excel file after initial processing.")
