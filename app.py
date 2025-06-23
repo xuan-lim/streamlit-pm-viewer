@@ -30,11 +30,13 @@ if uploaded_file is not None:
             if col in df.columns:
                 df[col] = pd.to_datetime(df[col], errors='coerce')
 
+        # Ensure ID and Parent ID are consistent strings and stripped of whitespace early
+        df['ID'] = df['ID'].astype(str).str.strip()
         if 'Parent ID' in df.columns:
-            df['Parent ID'] = df['Parent ID'].fillna('')
+            df['Parent ID'] = df['Parent ID'].astype(str).str.strip().fillna('')
         else:
-            df['Parent ID'] = ''
-        df['ID'] = [f"Item_{i}" for i in range(len(df))] if 'ID' not in df.columns else df['ID'].astype(str)
+            df['Parent ID'] = '' # Ensure Parent ID column exists if not in original data
+
         for col in ['Name', 'Type']:
             if col not in df.columns:
                 st.error(f"Missing required column: `{col}`. Please check your Excel file. Essential columns: ID, Name, Type, Start Date, End Date.")
@@ -51,31 +53,37 @@ if uploaded_file is not None:
             st.info("No 'Status' column found. Inferring status based on dates. Please add a 'Status' column (e.g., 'In Progress', 'Completed') for better control.")
             df['Status'] = 'N/A'
         else:
-            # --- FIX APPLIED HERE: Added .str before .lower() ---
             df['Status'] = df['Status'].astype(str).str.lower().fillna('n/a')
 
 
         # Infer status for better alerts if status column is generic or missing/inconsistent
         today = pd.to_datetime(datetime.now().date())
         def infer_status(row):
-            current_status = str(row.get('Status', 'n/a')).lower() # This is safe because str() makes it a Python string
+            current_status = str(row.get('Status', 'n/a')).lower()
 
             if pd.notna(row['Delivered Date']) and pd.notna(row['End Date']) and row['Delivered Date'] <= row['End Date']:
                 return 'completed'
             elif pd.notna(row['Delivered Date']) and pd.notna(row['End Date']) and row['Delivered Date'] > row['End Date']:
-                 return 'completed (late)' # Mark as completed but late
+                 return 'completed (late)'
             elif pd.notna(row['End Date']) and row['End Date'] < today:
                 return 'overdue'
             elif pd.notna(row['Start Date']) and pd.notna(row['End Date']) and row['Start Date'] <= today and row['End Date'] >= today:
-                if current_status not in ['completed', 'overdue']: # Don't overwrite explicit completed/overdue
+                if current_status not in ['completed', 'overdue']:
                     return 'in progress'
             elif pd.notna(row['Start Date']) and row['Start Date'] > today:
-                if current_status not in ['completed', 'overdue', 'in progress']: # Don't overwrite if already specified otherwise
+                if current_status not in ['completed', 'overdue', 'in progress']:
                     return 'not started'
-            # If no specific condition met, try to use existing status or default
-            return current_status if current_status != 'n/a' else 'not started' # Default 'n/a' to 'not started'
+            return current_status if current_status != 'n/a' else 'not started'
 
         df['Status'] = df.apply(infer_status, axis=1)
+
+        # --- Milestone Handling ---
+        # For 'Milestone' types, if Start Date == End Date, make Start Date slightly before End Date
+        # so Plotly can draw a very thin bar for it.
+        milestone_mask = (df['Type'].fillna('').str.lower() == 'milestone') & (df['Start Date'] == df['End Date'])
+        if not df[milestone_mask].empty:
+            df.loc[milestone_mask, 'Start Date'] = df.loc[milestone_mask, 'End Date'] - timedelta(days=0.1)
+
 
         st.success("Excel file successfully uploaded and processed!")
 
@@ -119,6 +127,13 @@ if 'df' in st.session_state:
             st.header("Project Timeline (Gantt Chart)")
             st.markdown("Interact with the chart (zoom, pan) using the toolbar. Use sliders below to adjust date range.")
 
+            # Timeline Granularity Selector
+            time_scale_option = st.selectbox(
+                "Select Timeline Scale:",
+                ["Daily", "Weekly", "Monthly", "Quarterly", "Annually"],
+                index=2 # Default to Monthly
+            )
+
             # Date Range Slider for "Zoom"
             min_date_df = filtered_df['Start Date'].min()
             max_date_df = filtered_df['End Date'].max()
@@ -141,7 +156,7 @@ if 'df' in st.session_state:
                 min_value=min_date,
                 max_value=max_date,
                 value=(default_slider_start, default_slider_end),
-                format="YYYY-MM-DD"
+                format="YYYY-MM-%d" # Using %d for daily precision as default for the slider
             )
 
             gantt_df = filtered_df[
@@ -153,6 +168,20 @@ if 'df' in st.session_state:
                 gantt_df['Text'] = gantt_df.apply(
                     lambda row: f"{row['Name']} ({row['Type']})<br>Status: {row['Status'].capitalize()}<br>Progress: {row['Progress']:.0f}%", axis=1
                 )
+
+                # Define custom colors for types, including a distinct one for Milestones
+                custom_colors = {
+                    'Project': '#636EFA',
+                    'Sub-Project': '#EF553B',
+                    'Task': '#00CC96',
+                    'Milestone': '#FFA15A', # A distinct color for milestones (orange-ish)
+                    'Program': '#AB63FA'
+                }
+                # Ensure all types in gantt_df are in custom_colors, add a default if not already defined
+                for item_type in gantt_df['Type'].unique():
+                    if item_type not in custom_colors:
+                        custom_colors[item_type] = '#19D3F3' # A default light blue
+
                 fig = px.timeline(
                     gantt_df,
                     x_start="Start Date",
@@ -170,20 +199,56 @@ if 'df' in st.session_state:
                         "Delivered Date": "|%Y-%m-%d",
                         "Progress": ":.0f%",
                         "Parent ID": True
-                    }
+                    },
+                    color_discrete_map=custom_colors
                 )
                 fig.update_yaxes(autorange="reversed")
                 fig.update_layout(height=600, showlegend=True)
+
+                # Set X-axis tick format based on selected granularity
+                # dtick for forcing ticks at certain intervals (e.g., M1 for monthly, M3 for quarterly)
+                if time_scale_option == "Daily":
+                    fig.update_xaxes(tickformat='%Y-%m-%d')
+                elif time_scale_option == "Weekly":
+                    fig.update_xaxes(tickformat='%Y-W%W', dtick='W1') # dtick='W1' for weekly intervals
+                elif time_scale_option == "Monthly":
+                    fig.update_xaxes(tickformat='%Y-%m', dtick='M1') # dtick='M1' for monthly intervals
+                elif time_scale_option == "Quarterly":
+                    fig.update_xaxes(tickformat='%Y-Q%q', dtick='M3') # dtick='M3' for quarterly intervals (every 3 months)
+                elif time_scale_option == "Annually":
+                    fig.update_xaxes(tickformat='%Y', dtick='M12') # dtick='M12' for yearly intervals
+
                 st.plotly_chart(fig, use_container_width=True)
             else:
                 st.info("No projects to display in the selected date range or with current filters.")
 
             st.header("📋 Hierarchical Project View")
             st.markdown("Expand projects to see their sub-projects, tasks, and milestones.")
+            st.markdown("Items whose parent is filtered out or missing in the current view will appear at the top level with a ⚠️ note.")
 
-            filtered_df['Parent ID'] = filtered_df['Parent ID'].astype(str)
+            # Ensure ID and Parent ID are string and stripped (important for matching)
+            # This was already done on df, but good practice to ensure on filtered_df as well
+            filtered_df['ID'] = filtered_df['ID'].astype(str).str.strip()
+            filtered_df['Parent ID'] = filtered_df['Parent ID'].astype(str).str.strip()
+
+            # Re-create children_map based on the current filtered_df
             children_map = filtered_df.groupby('Parent ID')
 
+            # Get all IDs present in the current filtered data
+            existing_item_ids = set(filtered_df['ID'].unique())
+
+            # Define top-level projects for display:
+            # 1. Projects with no parent (Parent ID is empty string)
+            # 2. Projects whose specified Parent ID does not exist within the current filtered_df's IDs (orphans in current view)
+            top_level_projects_for_display = filtered_df[
+                (filtered_df['Parent ID'] == '') |
+                (~filtered_df['Parent ID'].isin(existing_item_ids))
+            ].sort_values(by=['Start Date', 'Name'])
+
+            # Ensure no duplicates if an item satisfies multiple conditions
+            top_level_projects_for_display = top_level_projects_for_display.drop_duplicates(subset=['ID'])
+
+            # Recursive function to display children
             def display_children(parent_id, level=0):
                 if parent_id in children_map.groups:
                     children = children_map.get_group(parent_id)
@@ -200,10 +265,18 @@ if 'df' in st.session_state:
                     progress_val = int(row['Progress'])
                     progress_bar_text = f" {progress_val}%"
                     
-                    is_parent_node = row['ID'] in children_map.groups or row['Type'] in ['Project', 'Sub-Project']
-
-                    if is_parent_node:
-                        with st.expander(f"{prefix}📁 **{row['Name']}** ({row['Type']}){progress_bar_text} - Status: {row.get('Status', 'N/A').title()}"):
+                    # Check if this item itself has children in the current filtered view
+                    is_parent_node = row['ID'] in children_map.groups
+                    
+                    # Determine if it should be an expander
+                    # An item should be an expander if it has children OR if its type is commonly a container (Project, Sub-Project, Program)
+                    is_expandable_type = row['Type'].lower() in ['project', 'program', 'sub-project']
+                    
+                    if is_parent_node or is_expandable_type:
+                        # Use a folder emoji for expandable nodes
+                        expander_icon = "📁"
+                        expander_label = f"{prefix}{expander_icon} **{row['Name']}** ({row['Type']}){progress_bar_text} - Status: {row.get('Status', 'N/A').title()}"
+                        with st.expander(expander_label):
                             st.write(f"- **ID:** {row['ID']}")
                             st.write(f"- **Assigned To:** {row.get('Assigned To', 'N/A')}")
                             st.write(f"- **Start:** {row['Start Date'].strftime('%Y-%m-%d') if pd.notnull(row['Start Date']) else 'N/A'}")
@@ -211,8 +284,9 @@ if 'df' in st.session_state:
                             st.write(f"- **Delivered:** {row['Delivered Date'].strftime('%Y-%m-%d') if pd.notnull(row['Delivered Date']) else 'N/A'}")
                             if progress_val > 0:
                                 st.progress(progress_val / 100)
-                            display_children(row['ID'], level + 1)
+                            display_children(row['ID'], level + 1) # Recurse for children
                     else:
+                        # Display as a simple markdown item for leaves (tasks, milestones without children)
                         status_emoji = "✅" if row['Status'] == 'completed' else "⏳" if row['Status'] == 'in progress' else "🔴" if row['Status'] == 'overdue' else "⚪"
                         st.markdown(f"{prefix}{status_emoji} **{row['Name']}** ({row['Type']}){progress_bar_text}")
                         st.markdown(f"{prefix}  - **ID:** {row['ID']}")
@@ -224,26 +298,26 @@ if 'df' in st.session_state:
                         if progress_val > 0:
                             st.progress(progress_val / 100)
 
-            all_parent_ids_in_data = set(filtered_df['Parent ID'].unique())
-            top_level_projects = filtered_df[
-                (filtered_df['Parent ID'] == '') | (filtered_df['Parent ID'].isna())
-            ].sort_values(by=['Start Date', 'Name'])
-
-            potential_orphan_parents = filtered_df[
-                (~filtered_df['Parent ID'].isin(filtered_df['ID'])) &
-                (filtered_df['Parent ID'] != '') & (filtered_df['Parent ID'].notna())
-            ]
-            top_level_projects = pd.concat([top_level_projects, potential_orphan_parents]).drop_duplicates(subset=['ID']).sort_values(by=['Start Date', 'Name'])
-
-            if not top_level_projects.empty:
-                for index, row in top_level_projects.iterrows():
+            # Iterate through top-level projects for display
+            if not top_level_projects_for_display.empty:
+                for index, row in top_level_projects_for_display.iterrows():
                     progress_val = int(row['Progress'])
                     progress_bar_text = f" {progress_val}%"
                     
-                    is_parent_node = row['ID'] in children_map.groups or row['Type'] in ['Project', 'Program']
-
-                    if is_parent_node:
-                        with st.expander(f"📌 **{row['Name']}** ({row['Type']}){progress_bar_text} - Status: {row.get('Status', 'N/A').title()}", expanded=True):
+                    is_parent_node = row['ID'] in children_map.groups
+                    is_orphan = (row['Parent ID'] != '') and (row['Parent ID'] not in existing_item_ids)
+                    
+                    # Determine the main expander icon and label
+                    expander_icon = "📌" if not is_orphan else "⚠️"
+                    expander_label = f"{expander_icon} **{row['Name']}** ({row['Type']}){progress_bar_text} - Status: {row.get('Status', 'N/A').title()}"
+                    if is_orphan:
+                        expander_label += f" *(Orphaned: Parent '{row['Parent ID']}' missing)*"
+                        
+                    # Always make top-level items (or those promoted to top-level) expandable if they could have children
+                    is_expandable_type = row['Type'].lower() in ['project', 'program', 'sub-project']
+                    
+                    if is_parent_node or is_expandable_type:
+                        with st.expander(expander_label, expanded=True):
                             st.write(f"- **ID:** {row['ID']}")
                             st.write(f"- **Assigned To:** {row.get('Assigned To', 'N/A')}")
                             st.write(f"- **Start:** {row['Start Date'].strftime('%Y-%m-%d') if pd.notnull(row['Start Date']) else 'N/A'}")
@@ -251,10 +325,11 @@ if 'df' in st.session_state:
                             st.write(f"- **Delivered:** {row['Delivered Date'].strftime('%Y-%m-%d') if pd.notnull(row['Delivered Date']) else 'N/A'}")
                             if progress_val > 0:
                                 st.progress(progress_val / 100)
-                            display_children(row['ID'], 1)
+                            display_children(row['ID'], 1) # Start recursion for children at level 1
                     else:
+                        # This handles items at the top level that are not parents and not typically expandable types (e.g., a top-level task)
                         status_emoji = "✅" if row['Status'] == 'completed' else "⏳" if row['Status'] == 'in progress' else "🔴" if row['Status'] == 'overdue' else "⚪"
-                        st.markdown(f"**{status_emoji} {row['Name']}** ({row['Type']}){progress_bar_text} - Status: {row.get('Status', 'N/A').title()}")
+                        st.markdown(f"**{expander_icon} {row['Name']}** ({row['Type']}){progress_bar_text} - Status: {row.get('Status', 'N/A').title()}")
                         st.markdown(f"  - **ID:** {row['ID']}")
                         st.markdown(f"  - **Assigned To:** {row.get('Assigned To', 'N/A')}")
                         st.markdown(f"  - **Start:** {row['Start Date'].strftime('%Y-%m-%d') if pd.notnull(row['Start Date']) else 'N/A'}")
@@ -263,7 +338,7 @@ if 'df' in st.session_state:
                         if progress_val > 0:
                             st.progress(progress_val / 100)
             else:
-                st.info("No top-level projects found or all filtered out. Ensure 'Parent ID' is empty for your main projects.")
+                st.info("No projects found to display with current filters. Try adjusting your filters.")
 
 
         with col2: # Right Column for Alerts and Summaries
