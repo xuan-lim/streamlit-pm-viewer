@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/ # This ignores the 'venv' folder
+.venv/
+
+# IDEs and OS files
+.vscode/ # VS Code specific folder
+.idea/   # PyCharm specific folder
+.DS_Store # macOS specific
+Thumbs.db # Windows specific
+
+# Streamlit specific
+.streamlit/ # Streamlit's local configuration folder (usually auto-generated)
