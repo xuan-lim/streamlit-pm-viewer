@@ -100,16 +100,52 @@ if 'df' in st.session_state:
 
     # --- Sidebar Filters ---
     st.sidebar.header("Filter Projects")
+
+    # New filter for specific Project/Program Names
+    # Get all unique top-level project/program names
+    top_level_project_names = df[df['Type'].isin(['Project', 'Program'])]['Name'].unique().tolist()
+    selected_parent_projects = st.sidebar.multiselect(
+        "Filter by Specific Project/Program Name",
+        top_level_project_names
+    )
+
     all_types = df['Type'].unique().tolist()
     selected_types = st.sidebar.multiselect("Filter by Type", all_types, default=all_types)
 
     all_statuses = df['Status'].unique().tolist()
     selected_statuses = st.sidebar.multiselect("Filter by Status", all_statuses, default=all_statuses)
 
-    # Apply filters
-    filtered_df = df[
-        df['Type'].isin(selected_types) &
-        df['Status'].isin(selected_statuses)
+    # --- Apply Filters ---
+    # Start with a temporary DataFrame that might be filtered by specific parent projects
+    temp_df = df.copy()
+
+    if selected_parent_projects:
+        # Get IDs of the selected top-level projects
+        selected_parent_ids = df[df['Name'].isin(selected_parent_projects)]['ID'].tolist()
+        
+        included_ids = set(selected_parent_ids)
+        current_level_ids = set(selected_parent_ids)
+
+        # Recursively find all children (and their children, etc.)
+        while current_level_ids:
+            # Find items whose Parent ID is in the current_level_ids
+            next_level_children = df[df['Parent ID'].isin(current_level_ids)]['ID'].tolist()
+            
+            # Identify newly found children to avoid infinite loops and re-processing
+            newly_added_ids = set(next_level_children) - included_ids
+            
+            if not newly_added_ids: # No new children found, break the loop
+                break
+            
+            included_ids.update(newly_added_ids) # Add new children to the overall set
+            current_level_ids = newly_added_ids # These are the parents for the next iteration
+
+        temp_df = df[df['ID'].isin(included_ids)].copy() # Filter the DataFrame based on all included IDs
+    
+    # Apply existing Type and Status filters to the (potentially) pre-filtered temp_df
+    filtered_df = temp_df[
+        temp_df['Type'].isin(selected_types) &
+        temp_df['Status'].isin(selected_statuses)
     ].copy()
 
     st.sidebar.markdown("---")
