@@ -233,7 +233,7 @@ if 'df' in st.session_state:
                 elif time_scale_option == "Annually":
                     fig.update_xaxes(tickformat='%Y', dtick='M12') # dtick='M12' for yearly intervals
                 
-                # --- Add Hovering Lines (Spikelines) ---
+                # --- Add Hovering Lines (Spikes) ---
                 fig.update_xaxes(
                     showspikes=True, # Corrected property name
                     spikemode="across", # Line across the plot area
@@ -318,4 +318,222 @@ if 'df' in st.session_state:
                         with st.expander(expander_label):
                             st.write(f"- **ID:** {row['ID']}")
                             st.write(f"- **Assigned To:** {row.get('Assigned To', 'N/A')}")
-                            st.write(f"- **Start:**
+                            st.write(f"- **Start:** {row['Start Date'].strftime('%Y-%m-%d') if pd.notnull(row['Start Date']) else 'N/A'}")
+                            st.write(f"- **End:** {row['End Date'].strftime('%Y-%m-%d') if pd.notnull(row['End Date']) else 'N/A'}")
+                            st.write(f"- **Delivered:** {row['Delivered Date'].strftime('%Y-%m-%d') if pd.notnull(row['Delivered Date']) else 'N/A'}")
+                            if progress_val > 0:
+                                st.progress(progress_val / 100)
+                            display_children(row['ID'], level + 1) # Recurse for children
+                    else:
+                        # Display as a simple markdown item for leaves (tasks, milestones without children)
+                        status_emoji = "✅" if row['Status'] == 'completed' else "⏳" if row['Status'] == 'in progress' else "🔴" if row['Status'] == 'overdue' else "⚪"
+                        st.markdown(f"{prefix}{status_emoji} **{row['Name']}** ({row['Type']}){progress_bar_text}")
+                        st.markdown(f"{prefix}  - **ID:** {row['ID']}")
+                        st.markdown(f"{prefix}  - **Assigned To:** {row.get('Assigned To', 'N/A')}")
+                        st.markdown(f"{prefix}  - **Start:** {row['Start Date'].strftime('%Y-%m-%d') if pd.notnull(row['Start Date']) else 'N/A'}")
+                        st.markdown(f"{prefix}  - **End:** {row['End Date'].strftime('%Y-%m-%d') if pd.notnull(row['End Date']) else 'N/A'}")
+                        st.markdown(f"{prefix}  - **Delivered:** {row['Delivered Date'].strftime('%Y-%m-%d') if pd.notnull(row['Delivered Date']) else 'N/A'}")
+                        st.markdown(f"{prefix}  - **Status:** {row.get('Status', 'N/A').title()}")
+                        if progress_val > 0:
+                            st.progress(progress_val / 100)
+
+            # Iterate through top-level projects for display
+            if not top_level_projects_for_display.empty:
+                # Ensure no duplicates if an item satisfies multiple conditions (e.g., Parent ID empty AND not in existing_item_ids after filter)
+                top_level_projects_for_display = top_level_projects_for_display.drop_duplicates(subset=['ID'])
+
+                # Sort top-level projects themselves by Hierarchy_Rank, then Start Date, then Name
+                type_rank_map_top = {
+                    'program': 1,
+                    'project': 1,
+                    'sub-project': 2, # If a sub-project is orphaned, it might appear at top
+                    'task': 3,
+                    'milestone': 4
+                }
+                top_level_projects_for_display['Hierarchy_Rank'] = top_level_projects_for_display['Type'].str.lower().map(type_rank_map_top).fillna(99)
+                top_level_projects_for_display = top_level_projects_for_display.sort_values(by=['Hierarchy_Rank', 'Start Date', 'Name'])
+
+
+                for index, row in top_level_projects_for_display.iterrows():
+                    progress_val = int(row['Progress'])
+                    progress_bar_text = f" {progress_val}%"
+                    
+                    is_parent_node = row['ID'] in children_map.groups
+                    is_orphan = (row['Parent ID'] != '') and (row['Parent ID'] not in existing_item_ids)
+                    
+                    # Determine the main expander icon and label
+                    expander_icon = "📌" if not is_orphan else "⚠️"
+                    expander_label = f"{expander_icon} **{row['Name']}** ({row['Type']}){progress_bar_text} - Status: {row.get('Status', 'N/A').title()}"
+                    if is_orphan:
+                        expander_label += f" *(Orphaned: Parent '{row['Parent ID']}' missing)*"
+                        
+                    # Always make top-level items (or those promoted to top-level) expandable if they could have children or are container types
+                    is_expandable_type = row['Type'].lower() in ['project', 'program', 'sub-project']
+                    
+                    if is_parent_node or is_expandable_type:
+                        with st.expander(expander_label, expanded=True):
+                            st.write(f"- **ID:** {row['ID']}")
+                            st.write(f"- **Assigned To:** {row.get('Assigned To', 'N/A')}")
+                            st.write(f"- **Start:** {row['Start Date'].strftime('%Y-%m-%d') if pd.notnull(row['Start Date']) else 'N/A'}")
+                            st.write(f"- **End:** {row['End Date'].strftime('%Y-%m-%d') if pd.notnull(row['End Date']) else 'N/A'}")
+                            st.write(f"- **Delivered:** {row['Delivered Date'].strftime('%Y-%m-%d') if pd.notnull(row['Delivered Date']) else 'N/A'}")
+                            if progress_val > 0:
+                                st.progress(progress_val / 100)
+                            display_children(row['ID'], 1) # Start recursion for children at level 1
+                    else:
+                        # This handles items at the top level that are not parents and not typically expandable types (e.g., a top-level task/milestone)
+                        status_emoji = "✅" if row['Status'] == 'completed' else "⏳" if row['Status'] == 'in progress' else "🔴" if row['Status'] == 'overdue' else "⚪"
+                        st.markdown(f"**{expander_icon} {row['Name']}** ({row['Type']}){progress_bar_text}")
+                        st.markdown(f"  - **ID:** {row['ID']}")
+                        st.markdown(f"  - **Assigned To:** {row.get('Assigned To', 'N/A')}")
+                        st.markdown(f"  - **Start:** {row['Start Date'].strftime('%Y-%m-%d') if pd.notnull(row['Start Date']) else 'N/A'}")
+                        st.markdown(f"  - **End:** {row['End Date'].strftime('%Y-%m-%d') if pd.notnull(row['End Date']) else 'N/A'}")
+                        st.markdown(f"  - **Delivered:** {row['Delivered Date'].strftime('%Y-%m-%d') if pd.notnull(row['Delivered Date']) else 'N/A'}")
+                        if progress_val > 0:
+                            st.progress(progress_val / 100)
+            else:
+                st.info("No projects found to display with current filters. Try adjusting your filters.")
+
+
+        with col2: # Right Column for Alerts and Summaries
+            st.header("🔔 Alerts")
+            today_date_only = datetime.now().date()
+
+            alert_items = filtered_df[
+                ((filtered_df['Status'].isin(['in progress', 'not started', 'on hold', 'overdue'])) |
+                 (filtered_df['Delivered Date'].notna() & (filtered_df['Delivered Date'].dt.date > filtered_df['End Date'].dt.date))) &
+                (filtered_df['End Date'].notna())
+            ].copy()
+
+            st.subheader("❗ Overdue Items")
+            overdue_items = alert_items[alert_items['End Date'].dt.date < today_date_only].sort_values(by='End Date')
+            if not overdue_items.empty:
+                for idx, item in overdue_items.head(5).iterrows():
+                    st.error(f"**{item['Name']}** ({item['Type']}) is overdue! (Due: {item['End Date'].strftime('%Y-%m-%d')})")
+            else:
+                st.info("🎉 No overdue items currently!")
+
+            st.subheader("🔜 Due Soon (Next 7 Days)")
+            due_soon_items = alert_items[
+                (alert_items['End Date'].dt.date >= today_date_only) &
+                (alert_items['End Date'].dt.date <= today_date_only + timedelta(days=7))
+            ].sort_values(by='End Date')
+
+            if not due_soon_items.empty:
+                for idx, item in due_soon_items.head(5).iterrows():
+                    st.warning(f"**{item['Name']}** ({item['Type']}) due in {(item['End Date'].dt.date - today_date_only).days} days! (End: {item['End Date'].strftime('%Y-%m-%d')})")
+            else:
+                st.info("Nothing due in the next 7 days.")
+
+            st.subheader("✅ Recently Completed (Last 30 Days)")
+            completed_recently = filtered_df[
+                (filtered_df['Delivered Date'].notna()) &
+                (filtered_df['Delivered Date'].dt.date >= today_date_only - timedelta(days=30))
+            ].sort_values(by='Delivered Date', ascending=False)
+            if not completed_recently.empty:
+                for idx, item in completed_recently.head(5).iterrows():
+                    st.success(f"**{item['Name']}** ({item['Type']}) completed! (Delivered: {item['Delivered Date'].strftime('%Y-%m-%d')})")
+            else:
+                st.info("No items completed recently.")
+
+
+            st.header("📈 Project Overview Summary")
+            
+            # KPI Metrics
+            total_projects = filtered_df[filtered_df['Type'] == 'Project'].shape[0]
+            active_projects = filtered_df[
+                (filtered_df['Type'] == 'Project') &
+                (filtered_df['Status'].isin(['in progress', 'not started', 'on hold']))
+            ].shape[0]
+            completed_projects = filtered_df[
+                (filtered_df['Type'] == 'Project') &
+                (filtered_df['Status'].isin(['completed', 'completed (late)']))
+            ].shape[0]
+
+            kpi_col1, kpi_col2, kpi_col3 = st.columns(3)
+            kpi_col1.metric("Total Projects", total_projects)
+            kpi_col2.metric("Active Projects", active_projects)
+            kpi_col3.metric("Completed Projects", completed_projects)
+
+            summary_granularity = st.selectbox(
+                "Summarize by Timeframe:",
+                ["Weekly", "Monthly", "Quarterly", "Half-Yearly", "Yearly"],
+                index=0
+            )
+
+            st.markdown(f"**Summary of items by {summary_granularity} (based on End Date):**")
+
+            summary_df_filtered = filtered_df.dropna(subset=['End Date']).copy()
+
+
+            def get_time_period(date_ts, granularity):
+                date = date_ts.date()
+                if granularity == "Daily":
+                    return date.strftime('%Y-%m-%d')
+                elif granularity == "Weekly":
+                    return f"{date.isocalendar()[0]}-W{date.isocalendar()[1]:02d}"
+                elif granularity == "Monthly":
+                    return date.strftime('%Y-%m')
+                elif granularity == "Quarterly":
+                    quarter = (date.month - 1) // 3 + 1
+                    return f"{date.year}-Q{quarter}"
+                elif granularity == "Half-Yearly":
+                    half_year = 1 if date.month <= 6 else 2
+                    return f"{date.year}-H{half_year}"
+                elif granularity == "Yearly":
+                    return str(date.year)
+                return "N/A"
+
+            if not summary_df_filtered.empty:
+                summary_df_filtered['Time Period'] = summary_df_filtered['End Date'].apply(lambda x: get_time_period(x, summary_granularity))
+
+                status_counts_by_time = summary_df_filtered.groupby(['Time Period', 'Status'])['ID'].count().unstack(fill_value=0)
+
+                status_counts_by_time.columns = [col.replace(" ", "_").title() + "_Items" for col in status_counts_by_time.columns]
+
+                status_counts_by_time['Total_Items'] = status_counts_by_time.sum(axis=1)
+
+                grouped_summary = status_counts_by_time.reset_index()
+
+                cols_order = ['Time Period', 'Total_Items'] + sorted([col for col in grouped_summary.columns if col not in ['Time Period', 'Total_Items']])
+                grouped_summary = grouped_summary[cols_order]
+
+                grouped_summary = grouped_summary.sort_values(by='Time Period')
+
+                st.dataframe(grouped_summary, use_container_width=True)
+
+                st.subheader("Items by Status over Time")
+                chart_data_melted = grouped_summary.melt(
+                    id_vars='Time Period',
+                    value_vars=[col for col in grouped_summary.columns if 'Items' in col and col != 'Total_Items'],
+                    var_name='Status Type',
+                    value_name='Count'
+                )
+                fig_summary = px.bar(
+                    chart_data_melted,
+                    x='Time Period',
+                    y='Count',
+                    color='Status Type',
+                    title=f'Item Status by {summary_granularity}',
+                    barmode='stack',
+                    color_discrete_map={
+                        'Completed_Items': 'green',
+                        'Completed (late)_Items': 'darkgreen',
+                        'In_Progress_Items': 'blue',
+                        'Not_Started_Items': 'grey',
+                        'Overdue_Items': 'red'
+                    }
+                )
+                st.plotly_chart(fig_summary, use_container_width=True)
+
+            else:
+                st.info("No data available for the selected time summary.")
+
+    elif selected_tab == "Full Data Table":
+        st.header("Raw Project Data")
+        st.markdown("This table shows all data from your uploaded Excel file after initial processing.")
+        st.dataframe(filtered_df, use_container_width=True)
+
+
+    st.markdown("---")
+    st.caption(f"Dashboard generated on {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} (Current time zone).")
