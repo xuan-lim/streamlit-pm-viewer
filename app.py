@@ -257,9 +257,12 @@ class DashboardVisualizer:
                 legendgroup=row['Type'], showlegend=(row['Type'] not in [t.name for t in fig.data])
             ))
         
+        # --- FIXED: Add vertical line for today's date without the annotation text ---
         fig.add_vline(
-            x=datetime.now(), line_width=2, line_dash="solid", line_color="red",
-            annotation_text="Today", annotation_position="top right"
+            x=datetime.now(), 
+            line_width=2, 
+            line_dash="solid", 
+            line_color="red"
         )
 
         fig.update_layout(
@@ -517,7 +520,7 @@ def show_footer():
     st.markdown("---")
     st.markdown(f"<div style='text-align: center; color: #666; font-size: 0.8em;'>"
                 f"Dashboard updated: {current_time.strftime('%Y-%m-%d %H:%M:%S')} | "
-                f"PM Dashboard v4.1</div>", unsafe_allow_html=True)
+                f"PM Dashboard v4.2</div>", unsafe_allow_html=True)
 
 if __name__ == "__main__":
     main()
