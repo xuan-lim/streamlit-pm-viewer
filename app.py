@@ -257,7 +257,7 @@ class DashboardVisualizer:
 
     def create_enhanced_gantt(self, df: pd.DataFrame, date_range: Tuple[datetime, datetime]) -> go.Figure:
         """
-        Create an enhanced Gantt chart with a scalable timeline and range slider.
+        Create an enhanced Gantt chart with a scalable timeline, range slider, and hover line.
         """
         if df.empty:
             return go.Figure()
@@ -293,7 +293,6 @@ class DashboardVisualizer:
         }
 
         # Add bars for each project
-        # Note: We iterate through sorted df to add traces one by one, preserving order.
         for index, row in gantt_df.iterrows():
             fig.add_trace(go.Bar(
                 name=row['Type'],
@@ -308,22 +307,22 @@ class DashboardVisualizer:
                     f"<b>{row['Name']}</b><br>"
                     f"Type: {row['Type']}<br>"
                     "Start: %{base|%Y-%m-%d}<br>"
-                    "End: %{x|%Y-%m-%d}<br>" # Custom formatting needed as x is duration
+                    "End: %{x|%Y-%m-%d}<br>"
                     f"Progress: {row['Progress']:.0f}%<br>"
                     f"Status: {row['Status'].title()}<extra></extra>"
                 ),
                 legendgroup=row['Type'],
-                showlegend=(row['Type'] not in [t.name for t in fig.data]) # Show legend item only once per type
+                showlegend=(row['Type'] not in [t.name for t in fig.data])
             ))
 
-        # Update layout with scalable timeline controls
+        # Update layout with scalable timeline controls and hover line
         fig.update_layout(
             title_text='Enhanced Project Timeline with Scalable View',
             yaxis_title='Projects',
-            height=max(600, len(gantt_df) * 25),
+            height=max(700, len(gantt_df) * 28), # Increased height for better visibility
             barmode='overlay',
-            hovermode='closest',
             legend=dict(title="Item Type"),
+            hovermode='x unified', # Use 'x unified' for better hover experience
             xaxis=dict(
                 title='Timeline',
                 type='date',
@@ -342,6 +341,12 @@ class DashboardVisualizer:
                 rangeslider=dict(
                     visible=True
                 ),
+                # --- NEW: Add the spike line for hovering ---
+                showspikes=True,
+                spikemode='across',
+                spikesnap='cursor',
+                spikethickness=1,
+                spikedash='dot'
             )
         )
         
@@ -500,55 +505,68 @@ def main():
             show_project_hierarchy(filtered_df, timezone_manager)
 
 def show_dashboard(df: pd.DataFrame, timezone_manager: TimezoneManager):
-    """Main dashboard view"""
-    col1, col2 = st.columns([3, 1])
+    """Main dashboard view with a new full-width layout for the Gantt chart."""
+    
+    # --- NEW LAYOUT: Gantt Chart Section (Full Width) ---
+    st.header("📅 Project Timeline")
+
+    # Date range selector to filter data BEFORE rendering the chart
+    if not df.empty and 'Start Date' in df.columns and 'End Date' in df.columns:
+        min_date = df['Start Date'].min().date() if pd.notna(df['Start Date'].min()) else datetime.now().date()
+        max_date = df['End Date'].max().date() if pd.notna(df['End Date'].max()) else datetime.now().date() + timedelta(days=365)
+
+        date_range = st.date_input(
+            "Select a master date range to filter items:",
+            value=[min_date, max_date],
+            min_value=min_date,
+            max_value=max_date,
+            help="This filters the items shown in the Gantt chart below. Use the chart's internal controls to zoom."
+        )
+
+        if len(date_range) == 2:
+            with st.spinner("Generating Gantt chart..."):
+                visualizer = DashboardVisualizer(timezone_manager)
+                gantt_fig = visualizer.create_enhanced_gantt(df, date_range)
+                st.plotly_chart(gantt_fig, use_container_width=True)
+        else:
+            st.info("Please select both a start and end date for the master filter.")
+    else:
+        st.info("Upload data with 'Start Date' and 'End Date' columns to see the timeline.")
+        
+    st.markdown("---")  # Visual separator
+
+    # --- NEW LAYOUT: Stats and Alerts Section (in columns below the chart) ---
+    col1, col2 = st.columns(2)
 
     with col1:
-        st.header("📅 Project Timeline")
-
-        # Date range selector to filter data BEFORE rendering the chart
-        if not df.empty and 'Start Date' in df.columns and 'End Date' in df.columns:
-            min_date = df['Start Date'].min().date() if pd.notna(df['Start Date'].min()) else datetime.now().date()
-            max_date = df['End Date'].max().date() if pd.notna(df['End Date'].max()) else datetime.now().date() + timedelta(days=365)
-
-            date_range = st.date_input(
-                "Select a master date range to filter items:",
-                value=[min_date, max_date],
-                min_value=min_date,
-                max_value=max_date,
-                help="This filters the items shown in the Gantt chart below. Use the chart's internal controls to zoom."
-            )
-
-            if len(date_range) == 2:
-                with st.spinner("Generating Gantt chart..."):
-                    visualizer = DashboardVisualizer(timezone_manager)
-                    gantt_fig = visualizer.create_enhanced_gantt(df, date_range)
-                    st.plotly_chart(gantt_fig, use_container_width=True)
-            else:
-                st.info("Please select both a start and end date for the master filter.")
-
-    with col2:
         st.header("📊 Quick Stats")
-
+        
         # KPI metrics
         total_items = len(df)
         completed_items = len(df[df['Status'].str.contains('completed', case=False, na=False)])
         overdue_items = len(df[df['Status'] == 'overdue'])
         in_progress_items = len(df[df['Status'] == 'in progress'])
 
-        st.metric("Total Items", total_items)
-        st.metric("Completed", completed_items, delta=f"{(completed_items/total_items*100):.1f}%" if total_items > 0 else "0%")
-        st.metric("In Progress", in_progress_items)
-        st.metric("Overdue", overdue_items, delta_color="inverse", delta=f"{overdue_items} item(s)")
-
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.metric("Total Items", total_items)
+        with c2:
+            st.metric("Completed", completed_items, delta=f"{(completed_items/total_items*100):.1f}%" if total_items > 0 else "0%")
+        with c3:
+            st.metric("In Progress", in_progress_items)
+        with c4:
+            st.metric("Overdue", overdue_items, delta_color="inverse", delta=f"{overdue_items}")
+        
         # Status chart
         if not df.empty:
             visualizer = DashboardVisualizer(timezone_manager)
             status_fig = visualizer.create_status_summary_chart(df)
             st.plotly_chart(status_fig, use_container_width=True)
 
-        # Alerts
+    with col2:
+        # The show_alerts function includes its own header
         show_alerts(df, timezone_manager)
+
 
 def show_analytics(df: pd.DataFrame, timezone_manager: TimezoneManager):
     """Analytics view with detailed charts"""
@@ -687,7 +705,7 @@ def show_project_hierarchy(df: pd.DataFrame, timezone_manager: TimezoneManager):
 
 def show_alerts(df: pd.DataFrame, timezone_manager: TimezoneManager):
     """Show project alerts"""
-    st.subheader("🚨 Alerts")
+    st.header("🚨 Alerts")
 
     today = timezone_manager.get_current_time().date()
 
@@ -739,7 +757,7 @@ def show_footer(timezone_manager: TimezoneManager):
     st.markdown("---")
     st.markdown(f"<div style='text-align: center; color: #666; font-size: 0.8em;'>"
                 f"Dashboard updated: {current_time.strftime('%Y-%m-%d %H:%M:%S %Z')} | "
-                f"Enhanced PM Dashboard v2.0</div>",
+                f"Enhanced PM Dashboard v3.0</div>",
                 unsafe_allow_html=True)
 
 if __name__ == "__main__":
