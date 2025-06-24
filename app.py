@@ -317,7 +317,8 @@ class DashboardVisualizer:
             
         # Add a vertical line for today's date
         fig.add_vline(
-            x=datetime.now(), # Today's date and time
+            # FIXED: Convert datetime.now() to an ISO format string for robustness with Plotly's date axis
+            x=datetime.now().isoformat(),
             line_width=2,
             line_dash="solid",
             line_color="red",
