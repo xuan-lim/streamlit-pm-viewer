@@ -257,7 +257,6 @@ class DashboardVisualizer:
                 legendgroup=row['Type'], showlegend=(row['Type'] not in [t.name for t in fig.data])
             ))
         
-        # --- NEW: Add vertical line for today's date ---
         fig.add_vline(
             x=datetime.now(), line_width=2, line_dash="solid", line_color="red",
             annotation_text="Today", annotation_position="top right"
@@ -283,13 +282,11 @@ class DashboardVisualizer:
                 rangeslider=dict(visible=True),
                 showspikes=True, spikemode='across', spikesnap='cursor',
                 spikethickness=1, spikedash='dot',
-                # --- NEW: Add grid ---
                 showgrid=True, gridcolor='LightGrey', gridwidth=1
             ),
             yaxis=dict(
                 title='Projects',
                 autorange="reversed",
-                # --- NEW: Add grid ---
                 showgrid=True, gridcolor='LightGrey', gridwidth=1
             )
         )
@@ -494,4 +491,34 @@ def show_alerts(df: pd.DataFrame):
         st.markdown(f'<div class="alert-danger"><strong>⚠️ {len(overdue)} Overdue Items</strong></div>', unsafe_allow_html=True)
         with st.expander("View Overdue Items"):
             for _, item in overdue.iterrows():
-                st.markdown(f"• **{item['Name']}** - Due
+                due_date = item['End Date'].strftime('%Y-%m-%d') if pd.notna(item['End Date']) else 'N/A'
+                st.markdown(f"• **{item['Name']}** - Due: {due_date}")
+
+    week_ahead = today + timedelta(days=7)
+    due_soon = df[(df['End Date'].notna()) & (df['End Date'].dt.date <= week_ahead) & (df['End Date'].dt.date >= today) & (~df['Status'].str.contains('completed'))]
+    if not due_soon.empty:
+        st.markdown(f'<div class="alert-warning"><strong>⏰ {len(due_soon)} Items Due This Week</strong></div>', unsafe_allow_html=True)
+        with st.expander("View Items Due Soon"):
+            for _, item in due_soon.iterrows():
+                days_left = (item['End Date'].date() - today).days
+                st.markdown(f"• **{item['Name']}** - {days_left} day(s) left")
+
+    month_ago = today - timedelta(days=30)
+    recent_completed = df[(df['Delivered Date'].notna()) & (df['Delivered Date'].dt.date >= month_ago) & (df['Status'].str.contains('completed'))]
+    if not recent_completed.empty:
+        st.markdown(f'<div class="alert-success"><strong>🎉 {len(recent_completed)} Recently Completed</strong></div>', unsafe_allow_html=True)
+        with st.expander("View Recently Completed"):
+            for _, item in recent_completed.iterrows():
+                completed_date = item['Delivered Date'].strftime('%Y-%m-%d') if pd.notna(item['Delivered Date']) else 'N/A'
+                st.markdown(f"• **{item['Name']}** - Completed: {completed_date}")
+
+def show_footer():
+    current_time = datetime.now()
+    st.markdown("---")
+    st.markdown(f"<div style='text-align: center; color: #666; font-size: 0.8em;'>"
+                f"Dashboard updated: {current_time.strftime('%Y-%m-%d %H:%M:%S')} | "
+                f"PM Dashboard v4.1</div>", unsafe_allow_html=True)
+
+if __name__ == "__main__":
+    main()
+    show_footer()
